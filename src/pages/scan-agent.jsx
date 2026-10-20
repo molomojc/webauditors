@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
@@ -11,6 +11,8 @@ import {
 import { formatDuration } from '../lib/scans'
 import { hostnameOf, parseTarget } from '../lib/url'
 import UrlForm from '../components/UrlForm'
+import OwnershipBadge from '../components/OwnershipBadge'
+import { pollRun } from '../lib/runs'
 
 const SEVERITY_TONE = {
   high: 'border-red-400/40 text-red-300',
@@ -50,6 +52,8 @@ const ERROR_HINTS = {
   llm_timeout: 'The model did not answer in time. Try again with a smaller model.',
   llm_unreachable: 'The model endpoint could not be reached from this server.',
   step_limit: 'The agent hit its step limit. Run it again to continue.',
+  ownership_required:
+    'Publish the verification file or DNS record, then verify again.',
   blocked_host: 'The agent refuses private, loopback and reserved addresses.',
   blocked_port: 'Only ports 80 and 443 are reachable.',
   dns_failed: 'The domain could not be resolved.',
@@ -158,10 +162,22 @@ function FindingCard({ finding }) {
 
 export default function ScanAgentPage() {
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const initialUrl = searchParams.get('url') ?? ''
 
   const [status, setStatus] = useState('idle')
   const [targetUrl, setTargetUrl] = useState(initialUrl)
+  const [draftUrl, setDraftUrl] = useState(initialUrl)
+  const [runId, setRunId] = useState(null)
+  const [ownership, setOwnership] = useState({
+    status: 'unknown',
+    method: null,
+    detail: '',
+    token: null,
+    path: null,
+    dnsName: null,
+    instructions: '',
+  })
   const [events, setEvents] = useState([])
   const [findings, setFindings] = useState([])
   const [agent, setAgent] = useState(null)
@@ -193,6 +209,7 @@ export default function ScanAgentPage() {
     setEvents((current) => [...current, event])
 
     if (event.event === 'agent.assigned') setAgent(event.agent)
+    if (event.event === 'run.created') setRunId(event.runId)
     if (event.event === 'finding') {
       setFindings((current) => [...current, event.finding])
     }
@@ -208,6 +225,131 @@ export default function ScanAgentPage() {
     }
   }
 
+  async function checkOwnership() {
+    const parsed = parseTarget(draftUrl)
+
+    if (!parsed.ok) {
+      setOwnership((current) => ({
+        ...current,
+        status: 'failed',
+        detail: 'Enter the site URL first.',
+      }))
+      return
+    }
+
+    setOwnership((current) => ({ ...current, status: 'verifying', detail: '' }))
+
+    try {
+      if (!ownership.token) {
+        const response = await fetch('/api/agent/ownership', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'create', url: parsed.url }),
+        })
+        const payload = await response.json()
+
+        if (!payload.ok) {
+          throw new Error(payload.error ?? 'The ownership check failed.')
+        }
+
+        setOwnership({
+          status: 'unverified',
+          method: null,
+          detail: '',
+          token: payload.token,
+          path: payload.path,
+          dnsName: payload.dnsName,
+          instructions: payload.instructions,
+        })
+        return
+      }
+
+      const response = await fetch('/api/agent/ownership', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify',
+          url: parsed.url,
+          token: ownership.token,
+        }),
+      })
+      const payload = await response.json()
+
+      if (!payload.ok) {
+        throw new Error(payload.error ?? 'The ownership check failed.')
+      }
+
+      setOwnership((current) => ({
+        ...current,
+        status: payload.verified ? 'verified' : 'failed',
+        method: payload.method ?? null,
+        detail: payload.detail ?? '',
+      }))
+    } catch (error) {
+      setOwnership((current) => ({
+        ...current,
+        status: 'failed',
+        detail: error?.message ?? 'The ownership check failed.',
+      }))
+    }
+  }
+
+  // The queue path: the run is stored first, then a worker picks it up. The
+  // browser does not have to hold the stream open, and the finished run has a
+  // report page of its own.
+  async function runInBackground(rawUrl) {
+    const parsed = parseTarget(rawUrl)
+
+    if (!parsed.ok) {
+      setError({ code: 'invalid_url', message: parsed.error })
+      setStatus('error')
+      return
+    }
+
+    setStatus('queued')
+    setError(null)
+    setEvents([])
+    setFindings([])
+    setRunId(null)
+
+    try {
+      const response = await fetch('/api/agent/scan', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          url: parsed.url,
+          async: true,
+          ownershipToken: ownership.token ?? undefined,
+        }),
+      })
+      const payload = await response.json()
+
+      if (!payload.ok) {
+        const failure = new Error(payload.error ?? 'The run could not be queued.')
+        failure.code = payload.code ?? 'queue_failed'
+        throw failure
+      }
+
+      setRunId(payload.runId)
+
+      // Nothing claims a queued run on its own: a cron or a deploy hook calls
+      // the worker. In the prototype the browser nudges it once.
+      await fetch('/api/agent/worker', { method: 'POST' }).catch(() => null)
+
+      await pollRun(payload.runId, {
+        onUpdate: (run) => setRunId(run.id),
+      })
+
+      navigate(`/reports/agent/${payload.runId}`)
+    } catch (caught) {
+      setError({
+        code: caught?.code ?? 'queue_failed',
+        message: caught?.message ?? 'The queued run did not finish.',
+      })
+      setStatus('error')
+    }
+  }
+
   async function runScan(rawUrl) {
     controllerRef.current?.abort()
     const controller = new AbortController()
@@ -215,6 +357,7 @@ export default function ScanAgentPage() {
 
     setStatus('running')
     setTargetUrl(rawUrl)
+    setRunId(null)
     setEvents([])
     setFindings([])
     setAgent(null)
@@ -229,7 +372,10 @@ export default function ScanAgentPage() {
       const response = await fetch('/api/agent/scan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: rawUrl }),
+        body: JSON.stringify({
+          url: rawUrl,
+          ownershipToken: ownership.token ?? undefined,
+        }),
         signal: controller.signal,
       })
 
@@ -286,6 +432,7 @@ export default function ScanAgentPage() {
   function reset() {
     setStatus('idle')
     setTargetUrl('')
+    setRunId(null)
     setEvents([])
     setFindings([])
     setAgent(null)
@@ -379,14 +526,60 @@ export default function ScanAgentPage() {
               HTTP and HTTPS only. Ports 80 and 443. Private and reserved
               addresses are refused.
             </p>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3 border border-rule bg-panel px-4 py-3">
+              <OwnershipBadge
+                status={ownership.status}
+                method={ownership.method}
+                detail={ownership.detail}
+                onVerify={checkOwnership}
+              />
+              <p className="min-w-0 flex-1 text-xs leading-5 text-ink-soft">
+                Prove you control the domain before it is scanned. The check
+                reads one file or one DNS record; the agent never asks for it.
+              </p>
+            </div>
+
+            {ownership.token && ownership.status !== 'verified' ? (
+              <div className="mt-3 border border-signal/30 bg-signal/[0.04] px-4 py-3">
+                <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-signal">
+                  Publish this token
+                </p>
+                <p className="mt-1.5 text-xs leading-5 text-ink-soft">
+                  {ownership.instructions}
+                </p>
+                <pre className="mt-2 overflow-x-auto border border-rule bg-canvas px-3 py-2 font-mono text-[10px] leading-5 text-ink-soft">
+                  {ownership.token}
+                </pre>
+                <p className="mt-2 text-xs leading-5 text-ink-soft">
+                  Press Verify again once it is published.
+                </p>
+              </div>
+            ) : null}
+
             <div className="mt-4">
               <UrlForm
                 id="agent-url"
                 onSubmit={runScan}
                 initialValue={initialUrl}
+                onValueChange={setDraftUrl}
                 autoFocus
                 buttonLabel="Assign agent"
               />
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => runInBackground(draftUrl)}
+                className="inline-flex items-center justify-center border border-rule px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink transition hover:border-ink/60 hover:bg-canvas"
+              >
+                Queue this scan
+              </button>
+              <p className="min-w-0 flex-1 text-xs leading-5 text-ink-soft/80">
+                The run is stored first and picked up by a worker, so the
+                finished report outlives this tab.
+              </p>
             </div>
 
             {status === 'error' && error ? (
@@ -435,6 +628,26 @@ LLM_BASE_URL=https://api.openai.com/v1  # optional`}
           </div>
         ) : null}
 
+        {status === 'queued' ? (
+          <div className="mt-6 border border-rule bg-panel px-5 py-6">
+            <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-ink-soft">
+              Queued
+            </p>
+            <p className="mt-2 text-[13px] leading-6 text-ink">
+              The run is stored and waiting for a worker
+              {runId ? (
+                <>
+                  {' '}
+                  <span className="font-mono text-[12px] text-ink-soft">
+                    {runId}
+                  </span>
+                </>
+              ) : null}
+              . The report opens when it finishes.
+            </p>
+          </div>
+        ) : null}
+
         {status === 'running' || status === 'done' ? (
           <div className="fade-in">
             <div className="mt-6 border border-rule bg-panel">
@@ -467,6 +680,11 @@ LLM_BASE_URL=https://api.openai.com/v1  # optional`}
                         ? `${agent.id} v${agent.version} · ${agent.model ?? 'model'}`
                         : 'assigning agent'}
                     </p>
+                    {runId ? (
+                      <p className="mt-1 font-mono text-[9.5px] tracking-[0.12em] text-ink-soft/70">
+                        {runId}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
@@ -555,6 +773,14 @@ LLM_BASE_URL=https://api.openai.com/v1  # optional`}
                 </section>
 
                 <div className="mt-6 flex flex-wrap items-center gap-2">
+                  {runId ? (
+                    <Link
+                      to={`/reports/agent/${runId}`}
+                      className="inline-flex items-center justify-center border border-rule px-4 py-2.5 font-mono text-[10px] uppercase tracking-[0.16em] text-ink transition hover:border-ink/60 hover:bg-canvas"
+                    >
+                      Open the stored report
+                    </Link>
+                  ) : null}
                   <button
                     type="button"
                     onClick={reset}
@@ -572,9 +798,9 @@ LLM_BASE_URL=https://api.openai.com/v1  # optional`}
                 </div>
 
                 <p className="mt-4 border-t border-rule pt-4 text-xs leading-6 text-ink-soft/80">
-                  Agent runs are not stored yet. This transcript is the run
-                  record; persistence, re-runs against newer agent versions and
-                  report links come next.
+                  {runId
+                    ? `This run is stored as ${runId}. The report page keeps the transcript and the findings after this tab closes.`
+                    : 'This transcript is the run record. A stored report link appears here once the run has an id.'}
                 </p>
               </>
             ) : null}

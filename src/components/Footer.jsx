@@ -63,6 +63,7 @@ export default function Footer() {
             <ul className="mt-3 space-y-2 text-sm text-ink-soft">
               <li>Demo scans are simulated</li>
               <li>Live checks send real requests</li>
+              <li>Agent runs are stored server-side</li>
               <li>No vulnerability exploitation</li>
               <li>No real accounts or tracking</li>
             </ul>
@@ -74,7 +75,10 @@ export default function Footer() {
             © {new Date().getFullYear()} WebAuditors. Prototype for product
             validation.
           </p>
-          <p>Demo data stays in this browser. Live checks are not stored.</p>
+          <p>
+            Demo data stays in this browser. Live checks are not stored. Agent
+            runs are.
+          </p>
         </div>
       </div>
     </footer>

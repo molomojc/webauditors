@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { parseTarget } from '../lib/url'
 
@@ -8,10 +8,22 @@ export default function UrlForm({
   buttonLabel = 'Analyse website',
   autoFocus = false,
   id = 'website-url',
+  onValueChange,
 }) {
   const [value, setValue] = useState(initialValue)
   const [error, setError] = useState('')
   const errorId = `${id}-error`
+
+  function report(next) {
+    if (typeof onValueChange === 'function') onValueChange(next)
+  }
+
+  // The page needs to know the typed value, not just the submitted one, so it
+  // can offer the ownership check before a scan starts.
+  useEffect(() => {
+    report(initialValue)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialValue])
 
   function handleSubmit(event) {
     event.preventDefault()
@@ -57,6 +69,7 @@ export default function UrlForm({
             onChange={(event) => {
               setValue(event.target.value)
               if (error) setError('')
+              report(event.target.value)
             }}
             placeholder="yourwebsite.com"
             aria-invalid={error ? 'true' : undefined}

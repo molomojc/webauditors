@@ -80,6 +80,9 @@ try {
     LLM_BASE_URL: `http://127.0.0.1:${MOCK_PORT}/v1`,
     LLM_API_KEY: 'test-key',
     LLM_MODEL: 'mock-1',
+    // The run store is exercised by scripts/test-store.mjs; here it must not
+    // leave files behind in the repository.
+    STORE: 'memory',
   }, { shell: IS_WIN })
   await waitFor(`${BASE}/`)
 
@@ -126,6 +129,71 @@ try {
     (await findings.count()) >= 3,
     `expected at least three findings, saw ${await findings.count()}`,
   )
+
+  // The run is persisted: the id appears in the transcript and the run can be
+  // read back through the runs API with the same session cookie.
+  const runIdMatch = text.match(/run_[a-f0-9]{12}/)
+  assert.ok(runIdMatch, 'expected a run id in the transcript')
+  const runId = runIdMatch[0]
+
+  const cookies = await context.cookies()
+  const cookieHeader = cookies
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join('; ')
+
+  const runResponse = await fetch(`${BASE}/api/agent/runs?id=${runId}`, {
+    headers: cookieHeader ? { cookie: cookieHeader } : {},
+  })
+  const runPayload = await runResponse.json()
+
+  assert.equal(runResponse.status, 200, JSON.stringify(runPayload))
+  assert.equal(runPayload.ok, true)
+  assert.equal(runPayload.run.id, runId)
+  assert.equal(runPayload.run.status, 'completed')
+  assert.ok(runPayload.run.findings.length >= 3)
+  assert.ok(runPayload.run.events.length > 0)
+
+  const listResponse = await fetch(`${BASE}/api/agent/runs`, {
+    headers: cookieHeader ? { cookie: cookieHeader } : {},
+  })
+  const listPayload = await listResponse.json()
+  assert.equal(listResponse.status, 200, JSON.stringify(listPayload))
+  assert.ok(
+    listPayload.runs.some((run) => run.id === runId),
+    'the run should appear in the session list',
+  )
+
+  // The queue path: the run is enqueued, and the worker endpoint picks it up.
+  const queuedResponse = await fetch(`${BASE}/api/agent/scan`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(cookieHeader ? { cookie: cookieHeader } : {}),
+    },
+    body: JSON.stringify({ url: 'https://example.com', async: true }),
+  })
+  const queuedPayload = await queuedResponse.json()
+
+  assert.equal(queuedResponse.status, 202, JSON.stringify(queuedPayload))
+  assert.equal(queuedPayload.status, 'queued')
+  assert.ok(queuedPayload.runId)
+
+  const workerResponse = await fetch(`${BASE}/api/agent/worker`, { method: 'POST' })
+  const workerPayload = await workerResponse.json()
+
+  assert.equal(workerResponse.status, 200, JSON.stringify(workerPayload))
+  assert.equal(workerPayload.processed, 1)
+
+  const queuedRunResponse = await fetch(
+    `${BASE}/api/agent/runs?id=${queuedPayload.runId}`,
+    { headers: cookieHeader ? { cookie: cookieHeader } : {} },
+  )
+  const queuedRun = await queuedRunResponse.json()
+
+  assert.equal(queuedRunResponse.status, 200, JSON.stringify(queuedRun))
+  assert.equal(queuedRun.run.status, 'completed')
+  assert.ok(queuedRun.run.findings.length >= 3)
+  assert.ok(queuedRun.run.events.length > 0)
 
   await page.screenshot({
     path: path.join(OUT, '20-agent.png'),

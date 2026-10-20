@@ -11,7 +11,11 @@
     "test:live": "node scripts/test-live.mjs",
     "test:agent": "node scripts/test-agent.mjs",
     "test:api": "node scripts/test-api.mjs",
-    "test:collect": "node scripts/test-collect.mjs"
+    "test:collect": "node scripts/test-collect.mjs",
+    "test:store": "node scripts/test-store.mjs",
+    "test:auth": "node scripts/test-auth.mjs",
+    "test:ownership": "node scripts/test-ownership.mjs",
+    "test:report": "node scripts/test-report-e2e.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -5,6 +5,7 @@ import Logo from './Logo'
 
 const NAV_LINKS = [
   { to: '/dashboard', label: 'Dashboard' },
+  { to: '/runs', label: 'Runs' },
   { to: '/how-it-works', label: 'How it works' },
   { to: '/reports/demo', label: 'Sample report' },
 ]

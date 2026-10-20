@@ -8,6 +8,8 @@ import ScanDemoPage from './pages/scan-demo'
 import ScanLivePage from './pages/scan-live'
 import ScanAgentPage from './pages/scan-agent'
 import ReportPage from './pages/report'
+import ReportAgentPage from './pages/report-agent'
+import RunsPage from './pages/runs'
 import DashboardOverviewPage from './pages/dashboard/overview'
 import DnsPage from './pages/dashboard/dns'
 import TlsPage from './pages/dashboard/tls'
@@ -50,7 +52,9 @@ export default function App() {
           <Route path="/scan/live" element={<ScanLivePage />} />
           <Route path="/scan/agent" element={<ScanAgentPage />} />
           <Route path="/reports/demo" element={<ReportPage />} />
+          <Route path="/reports/agent/:runId" element={<ReportAgentPage />} />
           <Route path="/reports/:scanId" element={<ReportPage />} />
+          <Route path="/runs" element={<RunsPage />} />
           <Route path="/dashboard" element={<DashboardOverviewPage />} />
           <Route path="/dashboard/dns" element={<DnsPage />} />
           <Route path="/dashboard/tls" element={<TlsPage />} />

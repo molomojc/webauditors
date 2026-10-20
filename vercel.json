@@ -6,6 +6,9 @@
   ],
   "functions": {
     "api/scan.js": { "maxDuration": 30 },
-    "api/agent/scan.js": { "maxDuration": 60 }
+    "api/agent/scan.js": { "maxDuration": 60 },
+    "api/agent/runs.js": { "maxDuration": 10 },
+    "api/agent/worker.js": { "maxDuration": 60 },
+    "api/agent/ownership.js": { "maxDuration": 20 }
   }
 }

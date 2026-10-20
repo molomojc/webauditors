@@ -9,6 +9,9 @@ function scanApi() {
   const routes = [
     ['/api/scan', '/api/scan.js'],
     ['/api/agent/scan', '/api/agent/scan.js'],
+    ['/api/agent/runs', '/api/agent/runs.js'],
+    ['/api/agent/worker', '/api/agent/worker.js'],
+    ['/api/agent/ownership', '/api/agent/ownership.js'],
   ]
 
   return {

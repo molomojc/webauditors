@@ -39,7 +39,7 @@ record.
 | `system` | the `SYSTEM_PROMPT` constant | Never leaves the server |
 
 `publicAgent()` strips `system`, so `agent.assigned` carries the id, version,
-name, model and tool list — but not the prompt. The prompt itself is only sent
+name, model and tool list â€” but not the prompt. The prompt itself is only sent
 to the model provider.
 
 Because the model comes from the environment rather than the registry,
@@ -108,11 +108,23 @@ then the `finding` events, then `agent.completed`.
 
 ### What is not persisted
 
-Nothing. There is no database, queue, object store, scan id or history entry for
-agent runs, and the page keeps results only in React state (it writes no
-`localStorage`). Refreshing `/scan/agent` loses the transcript and findings. The
-`agent.completed` payload and the transcript in the browser are the only record
-of a run; the page says so at the bottom of a finished report.
+Runs are persisted, but the page itself keeps nothing: it writes no
+`localStorage`. The store is selected by the `STORE` environment variable:
+
+| `STORE` | Where runs live | Durable |
+| --- | --- | --- |
+| `file` (default) | `.data/store.json` in the project directory | Across restarts on one machine; **not** on serverless, where the filesystem belongs to one instance |
+| `memory` | The process | No |
+| `postgres` | A Postgres database, via `DATABASE_URL` | Yes, shared across instances |
+
+`postgres` needs the optional `pg` package (`npm install pg`) and the schema in
+`api/_lib/store/schema.sql`. It is the only option that survives a serverless
+deployment with more than one instance, so it is the one to set before a public
+launch.
+
+A run is scoped to the session that created it. The session is an anonymous
+cookie; only its SHA-256 hash is stored, and a run id on its own is not a key â€”
+reading a run from another session reports "not found" rather than "forbidden".
 
 `finding.id` is a slug derived from the title plus the finding's index, not a
 stored identifier. Two findings with the same title still get distinct ids. The
@@ -151,6 +163,7 @@ buffers on `\n` and silently ignores lines that do not parse.
 
 | `event` | Fields | Emitted when |
 | --- | --- | --- |
+| `run.created` | `runId`, `createdAt` | First event of a persisted run, before the agent is assigned |
 | `agent.assigned` | `agent` (`id`, `version`, `name`, `model`, `tools`), `assignedAt` | Once, before the first model turn |
 | `tool.call` | `id` (provider call id), `name`, `argument` (short display string) | Before each tool executes |
 | `tool.result` | `id`, `name`, `ok`, `summary` (one line) | After each tool returns |
@@ -160,7 +173,7 @@ buffers on `\n` and silently ignores lines that do not parse.
 
 `argument` is deliberately small: the probe path, the asset URL, the DNS record
 type, `"N findings"` for `finish`, and an empty string for `fetch_page`.
-`summary` is a human-readable one-liner such as `200 · 18 headers · TLSv1.3 · 12
+`summary` is a human-readable one-liner such as `200 Â· 18 headers Â· TLSv1.3 Â· 12
 scripts`; when a tool fails, `ok` is `false` and `summary` is the error text.
 
 Example lines (wrapped here, one line each on the wire):
@@ -168,9 +181,9 @@ Example lines (wrapped here, one line each on the wire):
 ```json
 {"event":"agent.assigned","agent":{"id":"web-auditor","version":1,"name":"Web Auditor","model":"gpt-4o-mini","tools":["fetch_page","probe_path","fetch_asset","dns_lookup","finish"]},"assignedAt":"2026-10-20T09:00:00.000Z"}
 {"event":"tool.call","id":"call_1","name":"fetch_page","argument":""}
-{"event":"tool.result","id":"call_1","name":"fetch_page","ok":true,"summary":"200 · 18 headers · TLSv1.3 · 12 scripts"}
-{"event":"finding","finding":{"id":"hsts-is-not-enabled","title":"HSTS is not enabled","severity":"medium","category":"transport","observation":"…","impact":"…","fix":"…","evidence":["headers"],"confidence":"high","limitations":null}}
-{"event":"agent.completed","summary":"…","findings":[],"usage":{"inputTokens":4000,"outputTokens":600},"steps":5,"evidence":["page","headers","tls","document","cookies","redirects","probe:/.env"],"completedAt":"2026-10-20T09:00:12.000Z"}
+{"event":"tool.result","id":"call_1","name":"fetch_page","ok":true,"summary":"200 Â· 18 headers Â· TLSv1.3 Â· 12 scripts"}
+{"event":"finding","finding":{"id":"hsts-is-not-enabled","title":"HSTS is not enabled","severity":"medium","category":"transport","observation":"â€¦","impact":"â€¦","fix":"â€¦","evidence":["headers"],"confidence":"high","limitations":null}}
+{"event":"agent.completed","summary":"â€¦","findings":[],"usage":{"inputTokens":4000,"outputTokens":600},"steps":5,"evidence":["page","headers","tls","document","cookies","redirects","probe:/.env"],"completedAt":"2026-10-20T09:00:12.000Z"}
 ```
 
 `agent.completed` repeats the findings already sent as `finding` events, plus the
@@ -182,11 +195,11 @@ summary, usage, step count and evidence set.
 | --- | --- | --- |
 | `200` | NDJSON | Stream started. Failures during the run arrive as `agent.failed` inside the stream |
 | `400` | `{ ok: false, code, error }` | Bad JSON (`invalid_body`), bad URL (`invalid_url`, `invalid_scheme`, `blocked_port`, `blocked_host`) |
-| `405` | `{ ok: false, code: "method_not_allowed", … }` | Anything but `POST`; also sends `allow: POST` |
-| `413` | `{ ok: false, code: "body_too_large", … }` | Streamed body over 8 KiB |
-| `415` | `{ ok: false, code: "unsupported_media_type", … }` | Missing or non-JSON `content-type` |
-| `429` | `{ ok: false, code: "agent_busy", … }` | More than two runs active on this instance; sends `retry-after: 5` |
-| `503` | `{ ok: false, code: "agent_not_configured", … }` | `LLM_API_KEY` or `LLM_MODEL` missing |
+| `405` | `{ ok: false, code: "method_not_allowed", â€¦ }` | Anything but `POST`; also sends `allow: POST` |
+| `413` | `{ ok: false, code: "body_too_large", â€¦ }` | Streamed body over 8 KiB |
+| `415` | `{ ok: false, code: "unsupported_media_type", â€¦ }` | Missing or non-JSON `content-type` |
+| `429` | `{ ok: false, code: "agent_busy", â€¦ }` | More than two runs active on this instance; sends `retry-after: 5` |
+| `503` | `{ ok: false, code: "agent_not_configured", â€¦ }` | `LLM_API_KEY` or `LLM_MODEL` missing |
 
 Two ordering details matter:
 
@@ -207,7 +220,7 @@ All tools share these rules:
 
 - The model sees `TOOL_SPECS` (OpenAI function schemas) on every turn; the
   executor is a `switch` over five names. An unknown name returns
-  `{ ok: false, error: 'Unknown tool "…".' }`.
+  `{ ok: false, error: 'Unknown tool "â€¦".' }`.
 - Every call increments `context.calls`; non-`finish` calls are refused once the
   12-call cap or the 45-second budget is exhausted. Network errors are caught and
   converted to `{ ok: false, error }`; they never throw out of the runner.
@@ -230,7 +243,7 @@ All tools share these rules:
 - **Side effects:** sets `context.origin` and `context.hostname` from
   `finalUrl`, so later probes, assets and DNS lookups follow the redirect
   destination.
-- **Limits:** collector-level only — 8 s per request, 20 s total for the
+- **Limits:** collector-level only â€” 8 s per request, 20 s total for the
   document, 5 redirects, 256 KiB of textual body, one request per hop.
 - **Evidence ids:** `page`, `headers`, `tls`, `document`, `cookies`, `redirects`.
 
@@ -248,7 +261,7 @@ All tools share these rules:
   probe that fails still consumes a slot. Path is truncated to 200 characters.
   Response body capped at 64 KiB, but only the first 4 KiB is kept server-side
   and it is never returned.
-- **Evidence id:** `probe:<path>` — the path as the model wrote it, not the final
+- **Evidence id:** `probe:<path>` â€” the path as the model wrote it, not the final
   URL.
 
 ### `fetch_asset`
@@ -278,15 +291,15 @@ All tools share these rules:
 
 ### `finish`
 
-- **Arguments:** `summary`, and `findings` — an array of at most 8 objects with
+- **Arguments:** `summary`, and `findings` â€” an array of at most 8 objects with
   `title`, `severity` (`high` | `medium` | `info`), `category` (optional),
-  `observation`, `impact`, `fix`, `evidence` (1–5 ids), `confidence`
+  `observation`, `impact`, `fix`, `evidence` (1â€“5 ids), `confidence`
   (`high` | `medium` | `low`, optional), `limitations` (optional). Required:
   `title`, `severity`, `observation`, `impact`, `fix`, `evidence`.
 - **Returns on success:** `ok`, `summary` (800 characters), `findings`
   (normalised: slug id, category default `general`, confidence default
   `medium`, text lengths capped).
-- **Returns on failure:** `{ ok: false, error: "Invalid findings: …" }`, listing
+- **Returns on failure:** `{ ok: false, error: "Invalid findings: â€¦" }`, listing
   up to 8 problems. The model can correct and call again; nothing is emitted and
   the run continues.
 - **Limits:** exempt from the call, probe, asset and time checks. It still
@@ -312,7 +325,7 @@ All tools share these rules:
 
 The 45-second budget is elapsed wall time since the run started, not time spent
 inside tools, so slow model turns eat into it. `finish` is exempt from the call
-and time checks, so the model can still submit after either limit is reached —
+and time checks, so the model can still submit after either limit is reached â€”
 provided a step remains.
 
 A run that exhausts the step limit without finishing has no partial result: no
@@ -327,12 +340,12 @@ continue."
 | Variable | Required | Default | Use |
 | --- | --- | --- | --- |
 | `LLM_BASE_URL` | No | `https://api.openai.com/v1` | Base URL; trailing slashes are stripped, then `/chat/completions` is appended |
-| `LLM_API_KEY` | Yes | — | Sent as `Authorization: Bearer …` |
-| `LLM_MODEL` | Yes | — | Sent as `model` in the request body and shown in `agent.assigned` |
+| `LLM_API_KEY` | Yes | â€” | Sent as `Authorization: Bearer â€¦` |
+| `LLM_MODEL` | Yes | â€” | Sent as `model` in the request body and shown in `agent.assigned` |
 
 `isAgentConfigured()` returns true only when both the key and the model are
 non-empty. The base URL may be any OpenAI-compatible chat-completions endpoint
-that supports function/tool calling — the client uses nothing else from the
+that supports function/tool calling â€” the client uses nothing else from the
 provider API.
 
 ### Local development
@@ -383,7 +396,7 @@ middleware returns `500` with `code: "dev_api_error"`.
 ### Vercel
 
 Set the variables per environment (Production, Preview, Development) in
-**Project → Settings → Environment Variables**, or with the CLI:
+**Project â†’ Settings â†’ Environment Variables**, or with the CLI:
 
 ```bash
 vercel env add LLM_API_KEY production
@@ -444,12 +457,12 @@ all-or-nothing:
 - `evidence` must contain at least one string id; the first 5 are kept, but every
   supplied ref is checked;
 - **every** cited id must exist in the set. An unknown id produces
-  `findings[i] cites unknown evidence "…"` and the whole submission is rejected,
+  `findings[i] cites unknown evidence "â€¦"` and the whole submission is rejected,
   so no `finding` event is emitted and the model must retry.
 
 The error message is returned to the model as a tool result, not to the browser;
 the browser only sees `tool.result` with `ok: false` and the generic summary
-`Invalid findings: …` (truncated to the first 8 errors).
+`Invalid findings: â€¦` (truncated to the first 8 errors).
 
 The completed event also returns `evidence`, the full array of ids issued during
 the run, so a client can audit which facts existed even when a finding cites only
@@ -460,16 +473,16 @@ some of them.
 `scanText()` in `bundle.js` scans text assets for secret-shaped strings and
 returns pattern groups, never matches:
 
-- provider keys (`sk_live_…`, `sk-ant-…`, `sk-…`, `ghp_…`, `AIza…`,
+- provider keys (`sk_live_â€¦`, `sk-ant-â€¦`, `sk-â€¦`, `ghp_â€¦`, `AIzaâ€¦`,
   publisher keys, Supabase project URLs), sampled as the first 6 characters plus
-  `…[redacted]`, or fully redacted when the kind is high severity;
+  `â€¦[redacted]`, or fully redacted when the kind is high severity;
 - JWTs, sampled as the first 8 characters (fully redacted when high severity),
   classified by decoding the payload: `role: service_role` is `high`,
   `role: anon` is `info`, anything else is `medium`;
 - secret-like assignments, reported by variable name only
   (`embedded-secret`, sample is the name, not the value);
 - database URLs with inline credentials, always
-  `postgres://…[redacted]`;
+  `postgres://â€¦[redacted]`;
 - source-map references, reported as a URL truncated to 80 characters and also
   returned separately as `sourceMapUrl`.
 
@@ -512,8 +525,8 @@ every array at 40 entries before it enters the prompt, so a page cannot inject
 hundreds of kilobytes of instructions through a `<script src>` value. This
 reduces, but does not eliminate, injection: headers, page titles and script URLs
 are still site-controlled text in the context, and the model can be influenced by
-them. Validation limits what a finding can cite, not what it can say — a model can
-cite `headers` and still describe it wrongly — so treat findings as model-written
+them. Validation limits what a finding can cite, not what it can say â€” a model can
+cite `headers` and still describe it wrongly â€” so treat findings as model-written
 prose anchored to captured evidence, not as verified facts.
 
 **Origin confinement, precisely.** `fetch_asset` checks the origin before the
@@ -558,7 +571,7 @@ asserts it received zero connections.
    `probe_path /.env`, `probe_path /.git/config`, `fetch_asset`, `dns_lookup TXT`,
    the expected finding titles, the summary and the evidence note, and that at
    least three finding cards rendered;
-5. repeats the run through `/scan/agent?url=…` at 390×844 and asserts no
+5. repeats the run through `/scan/agent?url=â€¦` at 390Ã—844 and asserts no
    horizontal overflow;
 6. writes `.smoke/20-agent.png` and `.smoke/21-agent-mobile.png` (`SMOKE_OUT`);
 7. kills both child processes (`taskkill /T /F` on Windows, `SIGTERM`
@@ -584,12 +597,16 @@ endpoint or the model.
 
 Limits that exist today:
 
-- **No persistence.** No run id, record, history, report link or replay.
-- **No auth or global rate limiting.** The endpoint is open to anyone who can
-  reach it. `content-type: application/json` forces a CORS preflight and a
-  per-instance concurrency cap of two stops one instance being pinned, but there
-  is no shared limiter, per-client quota or ownership verification. Those are
-  launch blockers.
+- **No persistence by default on serverless.** Runs are stored, but the default
+  file store lives on the instance's filesystem, so a run is not shared between
+  instances and does not survive a cold start. Set `DATABASE_URL` (and
+  `npm install pg`) to use the Postgres store before a public launch.
+- **No accounts, no global rate limiting.** The session is an anonymous cookie,
+  not an identity, and there is no ownership check unless
+  `REQUIRE_OWNERSHIP=1`. `content-type: application/json` forces a CORS
+  preflight and a per-instance concurrency cap of two stops one instance being
+  pinned, but there is no shared limiter, per-client quota or abuse control.
+  Those are launch blockers.
 - **One agent, one version.** The registry is a single hard-coded entry; nothing
   routes between agents or pins a version per request.
 - **No headless rendering.** The collector performs plain HTTP `GET`s and does
@@ -635,7 +652,7 @@ guard, and collect from more than one region.
 A tool touches four places. Everything else (event stream, call cap, time
 budget, evidence validation, UI transcript) follows automatically.
 
-**1. Schema — `api/_lib/agent/tools.js`, `TOOL_SPECS`.** Add an OpenAI function
+**1. Schema â€” `api/_lib/agent/tools.js`, `TOOL_SPECS`.** Add an OpenAI function
 schema with `additionalProperties: false`. This is what the model sees; prose in
 the description is the only guidance it gets.
 
@@ -651,7 +668,7 @@ the description is the only guidance it gets.
 }
 ```
 
-**2. Executor — the `switch` in `executeTool`.** Add a `case`, do the work,
+**2. Executor â€” the `switch` in `executeTool`.** Add a `case`, do the work,
 issue a stable evidence id, and return a small derived result. Respect
 `context.origin` / `context.hostname`, and add your own counter to
 `createAgentContext` if the tool needs a per-tool quota. The global 12-call cap
@@ -678,7 +695,7 @@ Follow the existing id convention: bare names for page-level facts (`page`,
 (`probe:<path>`, `asset:<url>`, `dns:<TYPE>`, `robots`). Never reuse an id for
 different content within one run, and never return the raw body.
 
-**3. Summary helpers — same file.** `summarizeToolCall` produces the `argument`
+**3. Summary helpers â€” same file.** `summarizeToolCall` produces the `argument`
 shown after `> tool_name`; `summarizeToolResult` produces the one-line
 `tool.result` summary and is also used for failures.
 
@@ -687,7 +704,7 @@ export function summarizeToolCall(name, args) {
   switch (name) {
     case 'robots_summary':
       return ''
-    // …
+    // â€¦
   }
 }
 
@@ -696,13 +713,13 @@ export function summarizeToolResult(name, result) {
 
   switch (name) {
     case 'robots_summary':
-      return `${result.status} · ${result.ruleCount} rule(s)`
-    // …
+      return `${result.status} Â· ${result.ruleCount} rule(s)`
+    // â€¦
   }
 }
 ```
 
-**4. Registry — `api/_lib/agent/registry.js`.** Add the name to the `tools` array
+**4. Registry â€” `api/_lib/agent/registry.js`.** Add the name to the `tools` array
 in `describeAgent()` so `agent.assigned` advertises it, and add the new evidence
 id to the example list in `SYSTEM_PROMPT` so the model knows it exists. Bump
 `version` when the prompt or tool surface changes.
@@ -711,3 +728,98 @@ Finally, add a unit assertion for the new evidence id or classifier to
 `scripts/test-api.mjs`, and extend the scripted turns in `scripts/mock-llm.mjs`
 if `npm run test:agent` should cover the new tool. Both are optional for the
 feature to work, but they are the cheapest place to catch a regression.
+
+## 10. Runs, the queue and ownership
+
+### The run record
+
+```js
+{
+  id: 'run_1a2b3c4d5e6f',
+  sessionHash: 'sha256 of the session id',
+  target: 'https://example.com/',
+  agent: { id: 'web-auditor', version: 1, name: 'Web Auditor', model: 'â€¦' },
+  status: 'queued' | 'running' | 'completed' | 'failed',
+  createdAt, updatedAt, completedAt,
+  summary: 'string' | null,
+  findings: [ â€¦ ],
+  usage: { inputTokens, outputTokens } | null,
+  steps: 5 | null,
+  error: { code, message } | null,
+  events: [ â€¦ ],
+  ownership: { verified: false, method: null, verifiedAt: null },
+}
+```
+
+A run is created when a scan starts, not when it finishes, so an interrupted
+run still has a record. Every streamed event is written to the run as it
+happens, and the transcript in the report page is the same list the browser
+saw.
+
+### Reading runs
+
+| Request | Response |
+| --- | --- |
+| `GET /api/agent/runs` | `{ ok: true, runs: [ { id, target, status, createdAt, completedAt, findingCount, severityCounts } ] }` for the current session |
+| `GET /api/agent/runs?id=<runId>` | `{ ok: true, run: { â€¦ } }` with the findings and the transcript |
+
+A run id on its own is not a key. The endpoint compares the session hash of the
+caller with the one stored on the run, and a mismatch is reported as
+`404 not_found` rather than `403`, so an id cannot be probed for existence.
+
+### The queue
+
+`POST /api/agent/scan` with `{ "url": "â€¦", "async": true }` creates a queued run
+and returns `202 { ok: true, runId, status: 'queued' }` without streaming
+anything. `POST /api/agent/worker` (or `GET`, so a platform cron can call it)
+claims one queued job, runs the agent with the same tools and the same limits,
+and writes the result back to the run. The worker is a pull model on purpose: a
+push queue can replace it without changing the run API.
+
+The default path stays synchronous and streaming. The queue exists so a long
+scan does not have to hold a browser connection open for its whole life.
+
+### Sessions
+
+There is no account. The server issues an anonymous `wa_sid` cookie, signed with
+`SESSION_SECRET` when that variable is set. Without it the secret is random per
+process, which is fine locally but means a challenge issued by one instance
+cannot be checked by another. **Set `SESSION_SECRET` in production.** Only the
+SHA-256 hash of the session id is stored, and it is what scopes a run to the
+browser that created it.
+
+### Ownership
+
+`REQUIRE_OWNERSHIP=1` makes the server refuse to scan a domain the session has
+not proved it controls. The proof is stateless: the server issues a token that
+carries its own signature, and the site owner publishes it either as a file at
+`/.well-known/webauditors-verification` or as a TXT record at
+`_webauditors.<hostname>`. The server then checks the site for that token.
+
+The check is deliberately outside the agent: the agent's tools never read the
+verification file, and a run cannot be authorised by anything the model says.
+A verified domain is remembered per session and per target, so proving one
+domain never authorises another.
+
+Ownership is optional in the prototype and enforced in production. The page
+always offers the check, so the flow can be demonstrated, but the server only
+demands it when `REQUIRE_OWNERSHIP=1`.
+
+### The pages
+
+- `/scan/agent` runs a scan and streams the transcript. The finished page links
+  to the stored report.
+- `/reports/agent/<runId>` is the durable report: the summary, the findings with
+  their evidence chips, and the transcript as a collapsible list.
+- `/runs` lists the runs of the current session.
+
+Every string on those pages came from a language model, so they are rendered as
+React text. There is no `dangerouslySetInnerHTML` anywhere in the run views.
+
+### Testing this layer
+
+```bash
+npm run test:store      # the store, the repository and the queue, offline
+npm run test:auth       # signed cookies and challenge tokens, offline
+npm run test:ownership  # the gate end to end, with its own server
+```
