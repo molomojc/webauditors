@@ -99,27 +99,53 @@ export async function failRun(id, { code, message }) {
   })
 }
 
-// Ownership is recorded per session and per target, so a verification for one
-// domain never authorises a scan of another.
-export function ownershipKey(sessionId, target) {
-  return `${hashSessionId(sessionId) ?? 'anonymous'}:${target}`
+// Ownership is recorded per session and per domain, so a verification for one
+// domain never authorises a scan of another, and a proof is not thrown away
+// because the site was reached over a different path.
+export const OWNERSHIP_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+export function hostnameOf(target) {
+  try {
+    return new URL(target).hostname.toLowerCase()
+  } catch {
+    return String(target ?? '').toLowerCase()
+  }
 }
 
-export async function recordOwnership({ sessionId, target, method }) {
+export function ownershipKey(sessionId, target) {
+  return `${hashSessionId(sessionId) ?? 'anonymous'}:${hostnameOf(target)}`
+}
+
+export async function recordOwnership({
+  sessionId,
+  target,
+  method,
+  expiresAt,
+}) {
   const store = await getStore()
   const record = {
     verified: true,
     method: method ?? null,
-    target,
+    target: hostnameOf(target),
     verifiedAt: now(),
+    expiresAt:
+      expiresAt ??
+      new Date(Date.now() + OWNERSHIP_TTL_MS).toISOString(),
   }
   await store.setOwnership(ownershipKey(sessionId, target), record)
   return record
 }
 
+// A proof that has expired is not a proof. The record carries its own expiry
+// so a stale entry can never authorise a scan.
 export async function getOwnership({ sessionId, target }) {
   const store = await getStore()
-  return store.getOwnership(ownershipKey(sessionId, target))
+  const record = await store.getOwnership(ownershipKey(sessionId, target))
+
+  if (!record?.verified) return null
+  if (record.expiresAt && Date.parse(record.expiresAt) < Date.now()) return null
+
+  return record
 }
 
 export async function enqueueJob({ runId, type = 'agent.scan', payload = {} }) {
@@ -140,6 +166,39 @@ export async function enqueueJob({ runId, type = 'agent.scan', payload = {} }) {
 export async function claimJob() {
   const store = await getStore()
   return store.claimJob()
+}
+
+export async function queuedJobCount() {
+  const store = await getStore()
+  const jobs = await store.listJobs({ status: 'queued', limit: 100 })
+  return jobs.length
+}
+
+// A run whose worker died stays in `running` for ever otherwise. Anything that
+// has not moved for a while is failed, so the report page stops waiting for it.
+export async function reapStaleRuns({ olderThanMs = 15 * 60_000 } = {}) {
+  const store = await getStore()
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString()
+  const stale = await store.findRuns({ status: 'running', olderThan: cutoff })
+
+  for (const run of stale) {
+    await failRun(run.id, {
+      code: 'timeout',
+      message: 'The run stopped without finishing and was closed.',
+    })
+  }
+
+  return stale.length
+}
+
+export async function getSetting(key) {
+  const store = await getStore()
+  return store.getSetting(key)
+}
+
+export async function setSetting(key, value) {
+  const store = await getStore()
+  return store.setSetting(key, value)
 }
 
 export async function finishJob(id, patch) {

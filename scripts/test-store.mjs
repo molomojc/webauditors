@@ -10,9 +10,11 @@ import {
   claimJob,
   completeRun,
   failRun,
+  getOwnership,
   getRun,
   hashSessionId,
   listRuns,
+  recordOwnership,
   summariseRun,
 } from '../api/_lib/runs.js'
 
@@ -139,7 +141,6 @@ console.log('store: file')
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'webauditors-store-'))
 const fileStore = createFileStore({ dir: directory })
-
 await testAsync('persists a run across store instances', async () => {
   const run = makeRun({ id: 'run_persisted' })
   await fileStore.createRun(run)
@@ -165,6 +166,71 @@ await testAsync('writes a readable store file', async () => {
   const parsed = JSON.parse(raw)
   assert.ok(parsed.runs)
   assert.ok(parsed.jobs)
+})
+
+await testAsync('keeps a corrupt store file instead of wiping it', async () => {
+  const broken = await fs.mkdtemp(path.join(os.tmpdir(), 'webauditors-broken-'))
+  await fs.writeFile(path.join(broken, 'store.json'), '{ not json')
+
+  const brokenStore = createFileStore({ dir: broken })
+  await brokenStore.init()
+  await brokenStore.createRun(makeRun({ id: 'run_after_corruption' }))
+
+  const files = await fs.readdir(broken)
+  assert.ok(
+    files.some((name) => name.includes('.corrupt-')),
+    'the damaged file should be kept as a backup',
+  )
+  assert.ok(files.includes('store.json'))
+
+  const reopened = createFileStore({ dir: broken })
+  await reopened.init()
+  assert.ok(await reopened.getRun('run_after_corruption'))
+
+  await fs.rm(broken, { recursive: true, force: true })
+})
+
+await testAsync('reclaims a job whose lease has expired', async () => {
+  const leaseStore = createMemoryStore()
+  const stale = {
+    id: 'job_stale',
+    runId: 'run_1',
+    type: 'agent.scan',
+    status: 'running',
+    attempts: 1,
+    createdAt: new Date().toISOString(),
+    leaseUntil: new Date(Date.now() - 1000).toISOString(),
+    payload: {},
+  }
+
+  await leaseStore.createJob(stale)
+  const claimed = await leaseStore.claimJob()
+  assert.ok(claimed, 'an expired lease should be reclaimable')
+  assert.equal(claimed.id, 'job_stale')
+  assert.equal(claimed.attempts, 2)
+})
+
+await testAsync('does not claim a job that is already leased', async () => {
+  const leaseStore = createMemoryStore()
+  await leaseStore.createJob({
+    id: 'job_live',
+    runId: 'run_1',
+    type: 'agent.scan',
+    status: 'queued',
+    attempts: 0,
+    createdAt: new Date().toISOString(),
+    payload: {},
+  })
+
+  await leaseStore.claimJob()
+  assert.equal(await leaseStore.claimJob(), null)
+})
+
+await testAsync('stores a setting and reads it back', async () => {
+  const settingsStore = createMemoryStore()
+  assert.equal(await settingsStore.getSetting('session_secret'), null)
+  await settingsStore.setSetting('session_secret', 'abc')
+  assert.equal(await settingsStore.getSetting('session_secret'), 'abc')
 })
 
 await fs.rm(directory, { recursive: true, force: true })
@@ -269,6 +335,52 @@ test('hashes a session id deterministically', () => {
   assert.notEqual(hashSessionId('abc'), hashSessionId('abd'))
   assert.equal(hashSessionId(null), null)
   assert.match(hashSessionId('abc'), /^[a-f0-9]{64}$/)
+})
+
+console.log('runs: ownership')
+
+await testAsync('remembers a proof per domain, not per URL', async () => {
+  await recordOwnership({
+    sessionId: 'session-owner',
+    target: 'https://example.com/',
+    method: 'file',
+  })
+
+  const same = await getOwnership({
+    sessionId: 'session-owner',
+    target: 'https://example.com/',
+  })
+  assert.ok(same, 'the proof should be found')
+  assert.equal(same.method, 'file')
+
+  const otherScheme = await getOwnership({
+    sessionId: 'session-owner',
+    target: 'http://example.com/',
+  })
+  assert.ok(otherScheme, 'the same domain should be remembered')
+})
+
+await testAsync('does not let one session use another session proof', async () => {
+  const theirs = await getOwnership({
+    sessionId: 'session-stranger',
+    target: 'https://example.com/',
+  })
+  assert.equal(theirs, null)
+})
+
+await testAsync('ignores an expired proof', async () => {
+  await recordOwnership({
+    sessionId: 'session-expiring',
+    target: 'https://expired.example/',
+    method: 'dns',
+    expiresAt: new Date(Date.now() - 1000).toISOString(),
+  })
+
+  const record = await getOwnership({
+    sessionId: 'session-expiring',
+    target: 'https://expired.example/',
+  })
+  assert.equal(record, null)
 })
 
 console.log(`\n${passed} assertions passed`)

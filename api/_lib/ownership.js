@@ -62,8 +62,10 @@ export function createChallenge({
 
   const nonce = crypto.randomBytes(16).toString('hex')
   const expiry = Math.floor(now / 1000) + Math.round(ttlMinutes * 60)
+  // The origin is signed, not just the hostname, so a token issued for
+  // https://example.com cannot be used to authorise http://example.com.
   const signature = signPayload(
-    `${nonce}|${expiry}|${hashSession(sessionId)}|${hostname}`,
+    `${nonce}|${expiry}|${hashSession(sessionId)}|${origin}`,
   )
   const token = `${nonce}.${expiry}.${signature}`
   const dnsName = `${DNS_PREFIX}.${hostname}`
@@ -192,7 +194,7 @@ export async function verifyChallenge({
   }
 
   const expected = signPayload(
-    `${parsed.nonce}|${parsed.expiry}|${hashSession(sessionId)}|${resolved.hostname}`,
+    `${parsed.nonce}|${parsed.expiry}|${hashSession(sessionId)}|${resolved.origin}`,
   )
 
   // A tampered token is rejected before any request leaves the server.

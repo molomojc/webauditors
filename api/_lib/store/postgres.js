@@ -35,6 +35,32 @@ export async function createPostgresClient(options = {}) {
 
   const query = (text, values) => pool.query(text, values)
 
+  // Old finished runs and jobs are dropped so the table cannot grow without
+  // bound. Anything still running is kept, because it still has work to do.
+  async function pruneRuns() {
+    await query(
+      `delete from agent_runs
+        where id in (
+          select id from agent_runs
+           where status not in ('running', 'queued')
+           order by created_at
+           limit greatest(count(*) - 200, 0)
+        )`,
+    )
+  }
+
+  async function pruneJobs() {
+    await query(
+      `delete from agent_jobs
+        where id in (
+          select id from agent_jobs
+           where status <> 'running'
+           order by created_at
+           limit greatest(count(*) - 50, 0)
+        )`,
+    )
+  }
+
   return {
     kind: 'postgres',
     durable: true,
@@ -62,6 +88,24 @@ export async function createPostgresClient(options = {}) {
       return result.rows[0] ? result.rows[0].value : null
     },
 
+    async setSetting(key, value) {
+      await query(
+        `insert into agent_settings (key, value, updated_at)
+         values ($1, $2, now())
+         on conflict (key) do update set value = excluded.value, updated_at = now()`,
+        [key, JSON.stringify(value)],
+      )
+      return value
+    },
+
+    async getSetting(key) {
+      const result = await query(
+        'select value from agent_settings where key = $1',
+        [key],
+      )
+      return result.rows[0] ? result.rows[0].value : null
+    },
+
     async createRun(run) {
       await query(
         `insert into agent_runs (id, session_hash, target, status, created_at, updated_at, completed_at, payload)
@@ -77,6 +121,7 @@ export async function createPostgresClient(options = {}) {
           JSON.stringify(run),
         ],
       )
+      await pruneRuns()
       return run
     },
 
@@ -136,6 +181,19 @@ export async function createPostgresClient(options = {}) {
       return result.rows.map((row) => row.payload)
     },
 
+    async findRuns({ status, olderThan, limit = 100 } = {}) {
+      const result = await query(
+        `select payload from agent_runs
+          where ($1::text is null or status = $1)
+            and ($2::timestamptz is null or updated_at < $2)
+          order by updated_at
+          limit $3`,
+        [status ?? null, olderThan ?? null, limit],
+      )
+
+      return result.rows.map((row) => row.payload)
+    },
+
     async createJob(job) {
       await query(
         `insert into agent_jobs (id, run_id, type, status, attempts, created_at, payload)
@@ -151,18 +209,23 @@ export async function createPostgresClient(options = {}) {
           JSON.stringify(job),
         ],
       )
+      await pruneJobs()
       return job
     },
 
+    // A job carries a lease. A worker that dies leaves a lease that expires,
+    // and the next claim takes the job back instead of stranding it.
     async claimJob() {
       const result = await query(
         `update agent_jobs
             set status = 'running',
                 attempts = attempts + 1,
-                started_at = now()
+                started_at = now(),
+                lease_until = now() + interval '120 seconds'
           where id = (
             select id from agent_jobs
              where status = 'queued'
+                or (status = 'running' and lease_until < now())
              order by created_at
              limit 1
              for update skip locked
@@ -181,6 +244,7 @@ export async function createPostgresClient(options = {}) {
         attempts: job.attempts,
         createdAt: job.created_at,
         startedAt: job.started_at,
+        leaseUntil: job.lease_until,
         payload: job.payload,
       }
     },
@@ -188,7 +252,7 @@ export async function createPostgresClient(options = {}) {
     async finishJob(id, patch) {
       const result = await query(
         `update agent_jobs
-            set status = $2, finished_at = now(), payload = payload || $3::jsonb
+            set status = $2, finished_at = now(), lease_until = null, payload = payload || $3::jsonb
           where id = $1
           returning *`,
         [id, patch.status ?? 'done', JSON.stringify(patch.payload ?? {})],

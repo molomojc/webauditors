@@ -30,6 +30,7 @@ create table if not exists agent_jobs (
   created_at timestamptz not null default now(),
   started_at timestamptz,
   finished_at timestamptz,
+  lease_until timestamptz,
   payload jsonb not null
 );
 
@@ -37,6 +38,12 @@ create index if not exists agent_jobs_status_idx
   on agent_jobs (status, created_at);
 
 create table if not exists agent_ownership (
+  key text primary key,
+  updated_at timestamptz not null default now(),
+  value jsonb not null
+);
+
+create table if not exists agent_settings (
   key text primary key,
   updated_at timestamptz not null default now(),
   value jsonb not null

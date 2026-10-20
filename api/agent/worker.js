@@ -6,6 +6,7 @@ import {
   failRun,
   finishJob,
   getRun,
+  reapStaleRuns,
   updateRun,
 } from '../_lib/runs.js'
 
@@ -34,8 +35,31 @@ export default async function handler(request, response) {
     return
   }
 
+  // A worker call runs a full agent scan, so it costs real money. When a
+  // secret is configured it is required; without one the endpoint is open,
+  // which is only acceptable in a prototype.
+  const workerSecret = process.env.WORKER_SECRET
+  if (workerSecret) {
+    const presented = String(request.headers['x-worker-secret'] ?? '')
+    if (presented !== workerSecret) {
+      response.statusCode = 401
+      response.setHeader('content-type', 'application/json; charset=utf-8')
+      response.end(
+        JSON.stringify({
+          ok: false,
+          code: 'worker_unauthorised',
+          error: 'The worker secret is missing or wrong.',
+        }),
+      )
+      return
+    }
+  }
+
   let job
   try {
+    // A worker that was killed mid-run leaves a run that never finishes. Those
+    // are closed here, so the report page stops waiting for them.
+    await reapStaleRuns()
     job = await claimJob()
   } catch (error) {
     console.error('[agent] queue unavailable:', error?.message ?? error)

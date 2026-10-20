@@ -198,7 +198,7 @@ summary, usage, step count and evidence set.
 | `405` | `{ ok: false, code: "method_not_allowed", â€¦ }` | Anything but `POST`; also sends `allow: POST` |
 | `413` | `{ ok: false, code: "body_too_large", â€¦ }` | Streamed body over 8 KiB |
 | `415` | `{ ok: false, code: "unsupported_media_type", â€¦ }` | Missing or non-JSON `content-type` |
-| `429` | `{ ok: false, code: "agent_busy", â€¦ }` | More than two runs active on this instance; sends `retry-after: 5` |
+| `429` | `{ ok: false, code: "agent_busy", â€¦ }` | More than two runs are streaming on this instance, or five are already queued; sends `retry-after: 5` |
 | `503` | `{ ok: false, code: "agent_not_configured", â€¦ }` | `LLM_API_KEY` or `LLM_MODEL` missing |
 
 Two ordering details matter:
@@ -602,11 +602,10 @@ Limits that exist today:
   instances and does not survive a cold start. Set `DATABASE_URL` (and
   `npm install pg`) to use the Postgres store before a public launch.
 - **No accounts, no global rate limiting.** The session is an anonymous cookie,
-  not an identity, and there is no ownership check unless
-  `REQUIRE_OWNERSHIP=1`. `content-type: application/json` forces a CORS
-  preflight and a per-instance concurrency cap of two stops one instance being
-  pinned, but there is no shared limiter, per-client quota or abuse control.
-  Those are launch blockers.
+  not an identity. The ownership gate is on by default in production, the
+  queue is bounded and two runs may stream at once per instance, but there is
+  no shared limiter, per-client quota or abuse control. Those are launch
+  blockers.
 - **One agent, one version.** The registry is a single hard-coded entry; nothing
   routes between agents or pins a version per request.
 - **No headless rendering.** The collector performs plain HTTP `GET`s and does
@@ -778,6 +777,18 @@ push queue can replace it without changing the run API.
 
 The default path stays synchronous and streaming. The queue exists so a long
 scan does not have to hold a browser connection open for its whole life.
+
+The queue is bounded too. An open endpoint that enqueues work is a spend lever,
+because every queued run eventually costs model tokens, so at most five runs
+wait at once and the answer is `429 queue_full` beyond that. The worker is a
+cost lever as well: set `WORKER_SECRET` and the endpoint refuses to run a job
+without the `x-worker-secret` header. Without that variable the worker is open,
+which is a prototype convenience and not a launch posture.
+
+A job carries a lease of two minutes. A worker that is killed mid-run leaves the
+job and the run behind, and the next worker takes the job back rather than
+stranding it. Runs that have not moved for fifteen minutes are closed as
+`timeout`, so the report page stops waiting for them.
 
 ### Sessions
 

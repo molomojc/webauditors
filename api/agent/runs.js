@@ -1,5 +1,5 @@
 import { getRun, hashSessionId, listRuns, summariseRun } from '../_lib/runs.js'
-import { getSessionId } from '../_lib/session.js'
+import { getSessionId, setSessionCookie } from '../_lib/session.js'
 
 // Read-only access to persisted agent runs. A run belongs to the session that
 // created it; a run id on its own is not a key, so a mismatch is reported as
@@ -24,6 +24,10 @@ export default async function handler(request, response) {
 
   try {
     const sessionId = await getSessionId(request)
+    // The cookie is set here too: a session that has not scanned yet has none,
+    // and without one the list would be empty on every request.
+    await setSessionCookie(response, sessionId)
+
     const url = new URL(request.url, 'http://localhost')
     const id = url.searchParams.get('id')
 

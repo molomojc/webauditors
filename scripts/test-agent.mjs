@@ -195,6 +195,30 @@ try {
   assert.ok(queuedRun.run.findings.length >= 3)
   assert.ok(queuedRun.run.events.length > 0)
 
+  // An odd id is a missing run, not a server error.
+  const oddResponse = await fetch(`${BASE}/api/agent/runs?id=constructor`, {
+    headers: cookieHeader ? { cookie: cookieHeader } : {},
+  })
+  assert.equal(oddResponse.status, 404)
+
+  // The queue is bounded: the sixth queued run is refused.
+  const queueStatuses = []
+
+  for (let index = 0; index < 6; index += 1) {
+    const response = await fetch(`${BASE}/api/agent/scan`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(cookieHeader ? { cookie: cookieHeader } : {}),
+      },
+      body: JSON.stringify({ url: 'https://example.com', async: true }),
+    })
+    queueStatuses.push(response.status)
+  }
+
+  assert.equal(queueStatuses[0], 202)
+  assert.equal(queueStatuses.at(-1), 429, 'the queue must be bounded')
+
   await page.screenshot({
     path: path.join(OUT, '20-agent.png'),
     fullPage: true,

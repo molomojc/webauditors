@@ -1,7 +1,8 @@
-import { getSessionId, setSessionCookie } from '../_lib/auth.js'
+import { getSessionId, setSessionCookie } from '../_lib/session.js'
 import { createChallenge, verifyChallenge } from '../_lib/ownership.js'
 import { normaliseTarget, ScanError } from '../_lib/guard.js'
 import { readJsonBody } from '../_lib/http.js'
+import { recordOwnership } from '../_lib/runs.js'
 
 function send(response, status, payload) {
   response.statusCode = status
@@ -58,8 +59,8 @@ export default async function handler(request, response) {
 
   // The session is anonymous, but it still has to survive between the create
   // and the verify call, so the cookie is set on both.
-  const sessionId = getSessionId(request)
-  setSessionCookie(response, sessionId)
+  const sessionId = await getSessionId(request)
+  await setSessionCookie(response, sessionId)
 
   if (action === 'create') {
     const challenge = createChallenge({ sessionId, target: target.origin })
@@ -82,6 +83,16 @@ export default async function handler(request, response) {
     sessionId,
     target: target.origin,
   })
+
+  // A verified domain is remembered for this session, so the next scan of the
+  // same site does not ask for the proof again.
+  if (result.verified) {
+    await recordOwnership({
+      sessionId,
+      target: target.origin,
+      method: result.method,
+    })
+  }
 
   send(response, 200, {
     ok: true,

@@ -14,6 +14,7 @@ import {
   enqueueJob,
   failRun,
   getOwnership,
+  queuedJobCount,
   recordOwnership,
 } from '../_lib/runs.js'
 import { getSessionId, setSessionCookie } from '../_lib/session.js'
@@ -22,11 +23,23 @@ import { getSessionId, setSessionCookie } from '../_lib/session.js'
 // this is not a global rate limit — it stops one instance being pinned by a
 // burst until auth and a shared limiter exist.
 const MAX_CONCURRENT = 2
+// The queue is bounded too: an open endpoint that enqueues work is a spend
+// lever, because every queued run eventually costs model tokens.
+const MAX_QUEUED = 5
 let activeRuns = 0
 
-// Ownership is enforced when REQUIRE_OWNERSHIP=1. A verification recorded for
-// this session and this target is enough; otherwise the request must carry a
-// token that the ownership module can check against the site itself.
+// Ownership is enforced when REQUIRE_OWNERSHIP=1, and by default in a
+// production deployment: a public endpoint that scans any domain on request is
+// an abuse tool. A verification recorded for this session and this target is
+// enough; otherwise the request must carry a token that the ownership module
+// can check against the site itself.
+function ownershipRequired() {
+  const configured = process.env.REQUIRE_OWNERSHIP
+  if (configured === '1') return true
+  if (configured === '0') return false
+  return process.env.NODE_ENV === 'production'
+}
+
 async function resolveOwnership({ sessionId, target, token }) {
   const stored = await getOwnership({ sessionId, target })
 
@@ -34,7 +47,7 @@ async function resolveOwnership({ sessionId, target, token }) {
     return { ok: true, ownership: stored }
   }
 
-  const required = process.env.REQUIRE_OWNERSHIP === '1'
+  const required = ownershipRequired()
 
   if (!required) {
     return {
@@ -163,6 +176,20 @@ export default async function handler(request, response) {
   const wantsQueue = payload?.async === true
 
   if (wantsQueue) {
+    if ((await queuedJobCount()) >= MAX_QUEUED) {
+      response.statusCode = 429
+      response.setHeader('retry-after', '10')
+      response.setHeader('content-type', 'application/json; charset=utf-8')
+      response.end(
+        JSON.stringify({
+          ok: false,
+          code: 'queue_full',
+          error: 'The queue is full. Try again when a run has finished.',
+        }),
+      )
+      return
+    }
+
     const run = await createRun({
       target: target.href,
       agent,
@@ -196,13 +223,31 @@ export default async function handler(request, response) {
 
   activeRuns += 1
 
-  const run = await createRun({
-    target: target.href,
-    agent,
-    sessionId,
-    ownership: ownership.ownership,
-    status: 'running',
-  })
+  let run
+  try {
+    run = await createRun({
+      target: target.href,
+      agent,
+      sessionId,
+      ownership: ownership.ownership,
+      status: 'running',
+    })
+  } catch (error) {
+    // The run could not be stored, so there is nothing to stream. The counter
+    // is released here, or the endpoint would answer 429 for ever.
+    activeRuns = Math.max(0, activeRuns - 1)
+    console.error('[agent] the run could not be stored:', error?.message ?? error)
+    response.statusCode = 503
+    response.setHeader('content-type', 'application/json; charset=utf-8')
+    response.end(
+      JSON.stringify({
+        ok: false,
+        code: 'run_store_unavailable',
+        error: 'The run could not be stored, so the scan did not start.',
+      }),
+    )
+    return
+  }
 
   response.statusCode = 200
   response.setHeader('content-type', 'application/x-ndjson; charset=utf-8')
@@ -216,7 +261,16 @@ export default async function handler(request, response) {
   const emit = (event) => {
     if (closed || response.writableEnded) return
     response.write(`${JSON.stringify(event)}\n`)
-    writes = writes.then(() => appendEvent(run.id, event))
+    writes = writes
+      .then(() => appendEvent(run.id, event))
+      .catch((error) => {
+        // A store hiccup must not kill the run the browser is watching; the
+        // reaper closes the run if it never reaches the store.
+        console.error(
+          '[agent] the transcript could not be written:',
+          error?.message ?? error,
+        )
+      })
   }
 
   emit({ event: 'run.created', runId: run.id, createdAt: run.createdAt })
