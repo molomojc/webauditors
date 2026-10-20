@@ -5,6 +5,7 @@
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/scan.js": { "maxDuration": 30 }
+    "api/scan.js": { "maxDuration": 30 },
+    "api/agent/scan.js": { "maxDuration": 60 }
   }
 }

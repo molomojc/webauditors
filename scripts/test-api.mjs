@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { classifyIp, normaliseTarget, resolvePublicHost } from '../api/_lib/guard.js'
 import { deriveChecks } from '../api/_lib/checks.js'
+import { scanText } from '../api/_lib/agent/bundle.js'
+import { validateFindings } from '../api/_lib/agent/tools.js'
 import { CHECKS } from '../src/data/demo.js'
 
 let passed = 0
@@ -179,6 +181,103 @@ test('weak evidence flags the right checks', () => {
 test('check ids match the UI contract', () => {
   const ids = deriveChecks(secureEvidence).map((item) => item.id)
   assert.deepEqual(ids, CHECKS.map((item) => item.id))
+})
+
+console.log('agent: bundle scanning')
+
+const jwt = (claims) =>
+  `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.c2lnbmF0dXJlMTIzNDU2`
+
+test('detects a service_role JWT without echoing it', () => {
+  const token = jwt({ role: 'service_role' })
+  const hit = scanText(`const key = "${token}"`).patterns.find(
+    (item) => item.kind === 'supabase-service-role-key',
+  )
+  assert.ok(hit, 'expected the service_role key to be flagged')
+  assert.equal(hit.severity, 'high')
+  assert.ok(!hit.sample.includes(token), 'sample must be redacted')
+})
+
+test('classifies an anon JWT as publishable', () => {
+  const hit = scanText(jwt({ role: 'anon' })).patterns.find(
+    (item) => item.kind === 'supabase-anon-key',
+  )
+  assert.ok(hit)
+  assert.equal(hit.severity, 'info')
+})
+
+test('detects a Stripe live secret', () => {
+  const key = `sk_live_${'a'.repeat(24)}`
+  const hit = scanText(key).patterns.find(
+    (item) => item.kind === 'stripe-secret-key',
+  )
+  assert.ok(hit)
+  assert.equal(hit.severity, 'high')
+  assert.ok(!hit.sample.includes(key))
+})
+
+test('does not confuse Anthropic keys with OpenAI keys', () => {
+  const kinds = scanText(`sk-ant-${'a'.repeat(30)}`).patterns.map(
+    (item) => item.kind,
+  )
+  assert.deepEqual(kinds, ['anthropic-key'])
+})
+
+test('detects shipped localhost URLs', () => {
+  const hit = scanText('fetch("http://localhost:3000/api")').patterns.find(
+    (item) => item.kind === 'localhost-url',
+  )
+  assert.ok(hit)
+  assert.equal(hit.severity, 'medium')
+})
+
+test('detects secret-like assignments by name only', () => {
+  const hit = scanText(
+    '{"SUPABASE_SERVICE_ROLE_KEY":"abcdefghijklmnop"}',
+  ).patterns.find((item) => item.kind === 'embedded-secret')
+  assert.ok(hit)
+  assert.equal(hit.sample, 'SUPABASE_SERVICE_ROLE_KEY')
+})
+
+console.log('agent: finding validation')
+
+const evidence = new Set(['headers', 'dns:TXT'])
+const finding = {
+  title: 'HSTS is not enabled',
+  severity: 'medium',
+  observation: 'No Strict-Transport-Security header was returned.',
+  impact: 'A first visit can be downgraded to HTTP.',
+  fix: 'Send Strict-Transport-Security with a long max-age.',
+  evidence: ['headers'],
+}
+
+test('accepts a finding that cites captured evidence', () => {
+  const verdict = validateFindings([finding], evidence)
+  assert.equal(verdict.ok, true)
+  assert.equal(verdict.findings.length, 1)
+  assert.equal(verdict.findings[0].severity, 'medium')
+})
+
+test('rejects a finding that cites no evidence', () => {
+  const verdict = validateFindings([{ ...finding, evidence: [] }], evidence)
+  assert.equal(verdict.ok, false)
+})
+
+test('rejects a finding that cites unknown evidence', () => {
+  const verdict = validateFindings(
+    [{ ...finding, evidence: ['invented-id'] }],
+    evidence,
+  )
+  assert.equal(verdict.ok, false)
+  assert.match(verdict.errors.join(' '), /unknown evidence/)
+})
+
+test('rejects a finding without a fix or severity', () => {
+  const verdict = validateFindings(
+    [{ ...finding, fix: '', severity: 'critical' }],
+    evidence,
+  )
+  assert.equal(verdict.ok, false)
 })
 
 console.log(`\n${passed} assertions passed`)

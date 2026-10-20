@@ -6,6 +6,7 @@ import LandingPage from './pages/landing'
 import ScanPage from './pages/scan'
 import ScanDemoPage from './pages/scan-demo'
 import ScanLivePage from './pages/scan-live'
+import ScanAgentPage from './pages/scan-agent'
 import ReportPage from './pages/report'
 import DashboardOverviewPage from './pages/dashboard/overview'
 import DnsPage from './pages/dashboard/dns'
@@ -47,6 +48,7 @@ export default function App() {
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/demo" element={<ScanDemoPage />} />
           <Route path="/scan/live" element={<ScanLivePage />} />
+          <Route path="/scan/agent" element={<ScanAgentPage />} />
           <Route path="/reports/demo" element={<ReportPage />} />
           <Route path="/reports/:scanId" element={<ReportPage />} />
           <Route path="/dashboard" element={<DashboardOverviewPage />} />

@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "test:smoke": "node scripts/smoke.mjs",
     "test:live": "node scripts/test-live.mjs",
-    "test:api": "node scripts/test-api.mjs"
+    "test:agent": "node scripts/test-agent.mjs",
+    "test:api": "node scripts/test-api.mjs",
+    "test:collect": "node scripts/test-collect.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -2,31 +2,38 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// Mounts the serverless collector during `npm run dev`, so the live scan flow
-// works locally without the Vercel CLI. In production the same file is served
-// by Vercel as a Node function.
+// Mounts the serverless handlers during `npm run dev`, so the live and agent
+// flows work locally without the Vercel CLI. In production the same files are
+// served by Vercel as Node functions.
 function scanApi() {
+  const routes = [
+    ['/api/scan', '/api/scan.js'],
+    ['/api/agent/scan', '/api/agent/scan.js'],
+  ]
+
   return {
     name: 'webauditors-scan-api',
     configureServer(server) {
-      server.middlewares.use('/api/scan', async (request, response) => {
-        try {
-          const module = await server.ssrLoadModule('/api/scan.js')
-          await module.default(request, response)
-        } catch (error) {
-          if (!response.headersSent) {
-            response.statusCode = 500
-            response.setHeader('content-type', 'application/json')
+      for (const [route, modulePath] of routes) {
+        server.middlewares.use(route, async (request, response) => {
+          try {
+            const module = await server.ssrLoadModule(modulePath)
+            await module.default(request, response)
+          } catch (error) {
+            if (!response.headersSent) {
+              response.statusCode = 500
+              response.setHeader('content-type', 'application/json')
+            }
+            response.end(
+              JSON.stringify({
+                ok: false,
+                code: 'dev_api_error',
+                error: String(error?.message ?? error),
+              }),
+            )
           }
-          response.end(
-            JSON.stringify({
-              ok: false,
-              code: 'dev_api_error',
-              error: String(error?.message ?? error),
-            }),
-          )
-        }
-      })
+        })
+      }
     },
   }
 }

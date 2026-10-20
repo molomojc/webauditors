@@ -75,28 +75,36 @@ export default function ScanPage() {
             <div className="mt-5 border-t border-rule pt-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink">
-                  Live check
+                  Agent scan
                 </span>
                 <span className="border border-signal/40 px-2 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-signal">
                   Beta
                 </span>
               </div>
               <p className="mt-2.5 text-xs leading-6 text-ink-soft">
-                The collector can send a real request and capture headers, TLS
-                and redirects. Only scan sites you own or have permission to
-                test.
+                An agent investigates the site with read-only tools and reports
+                only what it could observe. Requires an LLM key in this
+                environment.
               </p>
               <Link
-                to="/scan/live"
+                to="/scan/agent"
                 className="group mt-3 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-signal transition hover:text-ink"
               >
-                Run a live check
+                Assign an agent
                 <ArrowRight
                   size={12}
                   className="transition group-hover:translate-x-0.5"
                   aria-hidden="true"
                 />
               </Link>
+              <p className="mt-3">
+                <Link
+                  to="/scan/live"
+                  className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-soft underline decoration-rule underline-offset-4 transition hover:text-ink"
+                >
+                  Or capture evidence without an agent
+                </Link>
+              </p>
             </div>
           </div>
 
