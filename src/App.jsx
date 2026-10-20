@@ -5,6 +5,7 @@ import Footer from './components/Footer'
 import LandingPage from './pages/landing'
 import ScanPage from './pages/scan'
 import ScanDemoPage from './pages/scan-demo'
+import ScanLivePage from './pages/scan-live'
 import ReportPage from './pages/report'
 import DashboardOverviewPage from './pages/dashboard/overview'
 import DnsPage from './pages/dashboard/dns'
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/scan" element={<ScanPage />} />
           <Route path="/scan/demo" element={<ScanDemoPage />} />
+          <Route path="/scan/live" element={<ScanLivePage />} />
           <Route path="/reports/demo" element={<ReportPage />} />
           <Route path="/reports/:scanId" element={<ReportPage />} />
           <Route path="/dashboard" element={<DashboardOverviewPage />} />

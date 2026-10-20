@@ -15,7 +15,7 @@ export default function Footer() {
             </p>
             <p className="mt-4 inline-flex items-center gap-2 border border-amber-400/30 px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-amber-300">
               <FlaskConical size={12} aria-hidden="true" />
-              Interactive prototype — all results simulated
+              Demo data · opt-in live checks
             </p>
           </div>
 
@@ -61,10 +61,10 @@ export default function Footer() {
               Prototype scope
             </h2>
             <ul className="mt-3 space-y-2 text-sm text-ink-soft">
-              <li>No live network requests</li>
+              <li>Demo scans are simulated</li>
+              <li>Live checks send real requests</li>
               <li>No vulnerability exploitation</li>
               <li>No real accounts or tracking</li>
-              <li>Demo data stored in this browser</li>
             </ul>
           </div>
         </div>
@@ -74,7 +74,7 @@ export default function Footer() {
             © {new Date().getFullYear()} WebAuditors. Prototype for product
             validation.
           </p>
-          <p>No live scanning. No personal data collected.</p>
+          <p>Demo data stays in this browser. Live checks are not stored.</p>
         </div>
       </div>
     </footer>

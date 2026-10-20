@@ -75,16 +75,28 @@ export default function ScanPage() {
             <div className="mt-5 border-t border-rule pt-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink">
-                  Real scanning
+                  Live check
                 </span>
-                <span className="border border-rule px-2 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-ink-soft">
-                  Coming later
+                <span className="border border-signal/40 px-2 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-signal">
+                  Beta
                 </span>
               </div>
               <p className="mt-2.5 text-xs leading-6 text-ink-soft">
-                Production scanning is disabled in this prototype. A live
-                engine and its safety controls are out of scope for this demo.
+                The collector can send a real request and capture headers, TLS
+                and redirects. Only scan sites you own or have permission to
+                test.
               </p>
+              <Link
+                to="/scan/live"
+                className="group mt-3 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-signal transition hover:text-ink"
+              >
+                Run a live check
+                <ArrowRight
+                  size={12}
+                  className="transition group-hover:translate-x-0.5"
+                  aria-hidden="true"
+                />
+              </Link>
             </div>
           </div>
 
@@ -109,8 +121,9 @@ export default function ScanPage() {
             </ol>
 
             <DemoNotice className="mt-6">
-              This prototype never performs live requests. Every result,
-              timestamp and comparison is illustrative sample data.
+              Demo scans never perform live requests. Every result, timestamp
+              and comparison in the demo flow is illustrative sample data. The
+              separate live check does contact the target.
             </DemoNotice>
 
             <div className="mt-6 border-t border-rule pt-5">

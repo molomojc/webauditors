@@ -2,10 +2,13 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import UrlForm from '../components/UrlForm'
+import TerminalCard from '../components/TerminalCard'
 import {
   CHECKS,
   CHECK_GROUPS,
+  FINDINGS,
   SAMPLE_FINDING_KEYS,
+  statusesForFindings,
 } from '../data/demo'
 
 // three.js is heavy: keep it out of the initial bundle and only pull the scene
@@ -56,10 +59,10 @@ const DOES = [
 ]
 
 const DOES_NOT = [
-  'It never contacts the website you enter.',
+  'Demo scans never contact the website you enter.',
   'It does not exploit, enumerate or fuzz anything.',
   'It cannot confirm that a site is secure or insecure.',
-  'Safe live scanning and production safeguards come next.',
+  'Live checks are opt-in, and send real requests from the collector.',
 ]
 
 const SCOPE_GROUPS = Object.entries(CHECK_GROUPS).map(([key, label]) => ({
@@ -67,6 +70,49 @@ const SCOPE_GROUPS = Object.entries(CHECK_GROUPS).map(([key, label]) => ({
   label,
   checks: CHECKS.filter((check) => check.group === key),
 }))
+
+const STATUS_TONES = {
+  pass: 'ok',
+  warn: 'warn',
+  review: 'signal',
+}
+
+const AGENT_STATUSES = Object.fromEntries(
+  statusesForFindings(SAMPLE_FINDING_KEYS).map(({ id, status }) => [
+    id,
+    status,
+  ]),
+)
+
+// Status first so the outcome stays visible when the transcript scrolls
+// sideways on narrow screens; the numbers keep the log easy to scan.
+const countSeverity = (severity) =>
+  SAMPLE_FINDING_KEYS.filter((key) => FINDINGS[key]?.severity === severity)
+    .length
+
+const AGENT_SUMMARY = [
+  `${countSeverity('high')} high`,
+  `${countSeverity('medium')} medium`,
+  `${countSeverity('info')} informational`,
+].join(' · ')
+
+const AGENT_LINES = [
+  { tone: 'muted', text: 'demo mode · no network requests' },
+  ...CHECKS.map((check, index) => {
+    const status = AGENT_STATUSES[check.id]
+    const number = String(index + 1).padStart(2, '0')
+
+    return {
+      tone: STATUS_TONES[status] ?? 'muted',
+      text: `${number} ${(status ?? 'unknown').padEnd(6)} ${check.name}`,
+    }
+  }),
+  {
+    tone: 'warn',
+    text: `summary ........ ${AGENT_SUMMARY}`,
+    pause: 220,
+  },
+]
 
 function SectionHead({ index, title, meta }) {
   return (
@@ -299,8 +345,9 @@ export default function LandingPage() {
                 A prototype, not a scanner.
               </h2>
               <p className="mt-3 max-w-md text-sm leading-6 text-ink-soft">
-                This build validates the experience. It makes no network
-                requests and stores only demo data in this browser.
+                This build leads with demo data and adds an opt-in live
+                collector. Demo scans never leave this browser; live checks send
+                real requests from our server.
               </p>
               <ul className="mt-6 border-t border-amber-300/30">
                 {DOES_NOT.map((item) => (
@@ -332,6 +379,46 @@ export default function LandingPage() {
                 />
               </Link>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b border-rule bg-canvas">
+        <div className="mx-auto w-full max-w-6xl px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
+            <div>
+              <p className="font-mono text-[9.5px] uppercase tracking-[0.18em] text-ink-soft">
+                05 / Agent view
+              </p>
+              <h2 className="mt-4 max-w-sm text-[1.7rem] font-medium leading-[1.15] tracking-[-0.03em] text-ink sm:text-[2rem]">
+                The audit, read back as a transcript.
+              </h2>
+              <p className="mt-4 max-w-sm text-sm leading-6 text-ink-soft">
+                This is the shape a working session would take. Nothing below
+                ran: the transcript is written from the same demonstration data
+                as the sample report.
+              </p>
+              <Link
+                to="/reports/demo"
+                className="group mt-6 inline-flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-signal transition hover:text-ink"
+              >
+                Open the sample report
+                <ArrowRight
+                  size={12}
+                  className="transition group-hover:translate-x-0.5"
+                  aria-hidden="true"
+                />
+              </Link>
+            </div>
+
+            <TerminalCard
+              className="min-w-0"
+              title="webauditors / demo session"
+              tag="Simulated"
+              command="webauditors scan demo.example.com --demo"
+              lines={AGENT_LINES}
+              footer="Simulated transcript · no process was run"
+            />
           </div>
         </div>
       </section>

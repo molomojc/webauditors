@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   Check,
@@ -7,7 +7,7 @@ import {
   RefreshCw,
   SearchX,
 } from 'lucide-react'
-import { FINDINGS } from '../data/demo'
+import { FINDINGS, SEVERITIES } from '../data/demo'
 import {
   findingsFor,
   formatDate,
@@ -20,6 +20,7 @@ import { hostnameOf } from '../lib/url'
 import DemoNotice from '../components/DemoNotice'
 import FindingsToolbar from '../components/FindingsToolbar'
 import FindingsTable from '../components/FindingsTable'
+import TerminalCard from '../components/TerminalCard'
 import Drawer from '../components/Drawer'
 import FindingDetail from '../components/FindingDetail'
 import SeverityBadge from '../components/SeverityBadge'
@@ -62,6 +63,7 @@ export default function ReportPage() {
   const [severity, setSeverity] = useState('all')
   const [query, setQuery] = useState('')
   const [selectedFinding, setSelectedFinding] = useState(null)
+  const [narration, setNarration] = useState(null)
   const [exported, setExported] = useState(false)
 
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function ReportPage() {
     setSeverity('all')
     setQuery('')
     setSelectedFinding(null)
+    setNarration(null)
     setExported(false)
   }, [scanId])
 
@@ -98,6 +101,58 @@ export default function ReportPage() {
         .includes(searchTerm)
     return matchesSeverity && matchesQuery
   })
+
+  // The narration follows the row the visitor selected, falling back to the
+  // highest-severity finding. Objects come from the shared FINDINGS map, so the
+  // identity stays stable between renders.
+  const activeFinding = useMemo(() => {
+    if (narration) return narration
+    if (findings.length === 0) return null
+    return findings.reduce((best, finding) =>
+      (SEVERITIES[finding.severity]?.rank ?? 99) <
+      (SEVERITIES[best.severity]?.rank ?? 99)
+        ? finding
+        : best,
+    )
+  }, [findings, narration])
+
+  const narrationLines = useMemo(() => {
+    if (!activeFinding) return []
+    const evidence = (activeFinding.evidence ?? '')
+      .split('\n')
+      .filter((line) => line.trim())
+    const lines = [
+      {
+        tone: 'muted',
+        text: `finding ${activeFinding.id} · ${activeFinding.severity} · ${activeFinding.category}`,
+      },
+      { tone: 'out', text: activeFinding.description ?? '', wrap: true },
+      { tone: 'out', text: '' },
+      { tone: 'signal', text: 'evidence' },
+      ...evidence.map((text) => ({ tone: 'out', text, wrap: true })),
+      { tone: 'out', text: '' },
+      { tone: 'signal', text: 'recommended fix' },
+      {
+        tone: 'out',
+        text: activeFinding.recommendation ?? '',
+        wrap: true,
+      },
+    ]
+    const verificationStep = activeFinding.verification?.[0]
+    if (verificationStep) {
+      lines.push({
+        tone: 'muted',
+        text: `verify: ${verificationStep}`,
+        wrap: true,
+      })
+    }
+    return lines
+  }, [activeFinding])
+
+  function handleSelectFinding(finding) {
+    setSelectedFinding(finding)
+    setNarration(finding)
+  }
 
   function handleExport() {
     downloadReport(scan)
@@ -286,7 +341,7 @@ export default function ReportPage() {
             {filtered.length > 0 ? (
               <FindingsTable
                 findings={filtered}
-                onSelect={setSelectedFinding}
+                onSelect={handleSelectFinding}
               />
             ) : (
               <div className="px-6 py-14 text-center">
@@ -311,9 +366,35 @@ export default function ReportPage() {
           </div>
         </section>
 
+        {activeFinding ? (
+          <section className="mt-10">
+            <div className="border-b border-rule pb-4">
+              <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-soft">
+                02 / Agent view
+              </p>
+              <h2 className="mt-2 text-lg font-medium tracking-[-0.02em] text-ink">
+                The finding, read back.
+              </h2>
+              <p className="mt-1.5 max-w-2xl text-[13px] leading-6 text-ink-soft">
+                A simulated narration written from the same demonstration data.
+                No command was run and no live target was contacted.
+              </p>
+            </div>
+
+            <TerminalCard
+              className="mt-6"
+              title="webauditors / report narration"
+              tag="Simulated"
+              command={`webauditors explain ${activeFinding.id}`}
+              lines={narrationLines}
+              footer="Simulated narration · no process was run"
+            />
+          </section>
+        ) : null}
+
         <section className="mt-10 border border-rule bg-panel p-5 sm:p-6">
           <h2 className="font-mono text-[9px] uppercase tracking-[0.18em] text-ink-soft">
-            02 / About this report
+            03 / About this report
           </h2>
           <ul className="mt-4 grid border-t border-rule sm:grid-cols-2 sm:gap-x-8">
             <li className="flex gap-3 border-b border-rule py-3.5">
