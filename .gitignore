@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.smoke
+*.local
+.env
+.env.*
+!.env.example
+*.log
+.opencode/skills/
+__pycache__/
+*.pyc
+.DS_Store
